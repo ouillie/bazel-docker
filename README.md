@@ -13,7 +13,8 @@ by bind-mounting your workspace and build output directories into the container;
 an elegant, simple solution
 &mdash; with a couple major drawbacks:
 
-1. You have to rebuild the analysis cache every time you run a command.
+1. You have to restart the Bazel server and rebuild the analysis cache
+   every time you run a command.
    This significantly degrades rapid iteration.
 2. When you bind-mount a MacOS directory to the container's build output directory directly,
    you can experience mysterious build failures that seem to be caused by latency issues.
@@ -54,7 +55,7 @@ shortly after a command finishes.
 
 The script also handles relative targets,
 so you can run e.g. `bazel-docker build :target` from a subpackage directory,
-and it will work that same as a normal invocation of `bazel`.
+and it will work the same as a normal invocation of `bazel`.
 
 It also bind-mounts `${HOME}/.ssh` into the container (read-only)
 so that [`git_override`] works the same as it would on the host.
