@@ -1,0 +1,10 @@
+module(name = "bazel-docker-test", version = "0.0.0")
+
+# This Bazel module exists only to test the bazel-docker script.
+# You can just run e.g. `./bazel-docker build @grpc//:grpc` to test it.
+
+# Build gRPC with it
+# because that's one of the modules that triggers a build failure
+# when we try to bind-mount the output directory directly to the host
+# on a Mac.
+bazel_dep(name = "grpc", version = "1.74.1")

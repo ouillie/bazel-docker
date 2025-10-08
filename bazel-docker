@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+
+# Drop-in replacement for Bazel that runs commands in a persistent Docker container.
+#
+# Requirements:
+# - bazel
+# - docker
+# - git
+
+set -e
+
+# Format (color) user messages only if stderr (2) is a terminal (-t).
+# https://en.wikipedia.org/wiki/ANSI_escape_code
+if [ -t 2 ]
+then
+  reset="$(tput sgr0)"
+  bold="$(tput bold)"
+  red="$(tput setaf 1)"
+  yellow="$(tput setaf 3)"
+  blue="$(tput setaf 4)"
+fi
+
+# Log a message to stderr with the formatted prefix `[ERROR] `.
+function log-error {
+  echo >&2 -e "[${red}ERROR${reset}] $1"
+}
+
+# Log a message to stderr with the formatted prefix `[WARN] `.
+function log-warn {
+  echo >&2 -e "[${yellow}WARN${reset}] $1"
+}
+
+# Log a message to stderr with the formatted prefix `[INFO] `.
+function log-info {
+  echo >&2 -e "[${blue}INFO${reset}] $1"
+}
+
+# Map the root of the Git repository on the host to the same path inside the container
+# so that any build errors include accurate absolute file paths.
+repository_root="$(git rev-parse --show-toplevel)"
+
+# Print the static name of the container for the current repository root to stdout.
+# Use a separate container for each repository root in case there are multiple Git worktrees.
+function bazel-container-name {
+  # Combine the basename, for intelligibility, with a hash of the full path, for uniqueness.
+  echo "bazel-$(
+    basename "$repository_root"
+  )-$(
+    <<< "$repository_root" sha256sum | head --bytes=7
+  )"
+}
+
+# The only departure from the standard `bazel` CLI is the addition of a `--name` option,
+# which must be supplied by itself,
+# and causes the command to simply print the name of the Bazel container for this repository root.
+if [[ $# == 1 ]] && [[ "$1" == '--name' ]]
+then
+  bazel-container-name
+  exit
+fi
+
+# Run the Bazel command from the same path inside the container
+# as the current working directory on the host
+# so that relative references like `bazel build :lib` work.
+working_directory="$(pwd)"
+
+# Store build outputs in a directory called `_bazel__docker`
+# under the appropriate cache path for the platform / user.
+# Build outputs are backed by a persistent, named Docker volume.
+if [[ "$(uname)" == 'Darwin' ]]; then
+  output_root="/private/var/tmp/_bazel__docker"
+else
+  output_root="${XDG_CACHE_HOME:-"${HOME}/.cache"}/bazel/_bazel__docker"
+fi
+output_volume='bazel-output-root'
+
+# Make sure that a named container is running.
+function ensure-container-running {
+  local name="$1"           # The name of the container to search for.
+  local start_command="$2"  # Command to start the container if it's not already running.
+  local state="$(docker inspect --format='{{.State.Status}}' "${name}" 2> /dev/null || true)"
+  case "$state" in
+    'running')
+      # The named container is already running. No need to do anything.
+      ;;
+    'exited')
+      log-info "Restarting container ${bold}${name}${reset}"
+      if ! docker start "$name" > /dev/null
+      then
+        log-warn "Removing ${bold}${name}${reset} to start from scratch"
+        docker rm "$name" > /dev/null
+        $start_command
+      fi
+      ensure-container-running "$name" "$start_command"
+      ;;
+    '')
+      # The container does not exist. Run it.
+      log-info "Starting container ${bold}${name}${reset}"
+      $start_command
+      ensure-container-running "$name" "$start_command"
+      ;;
+    *)
+      # Handle these situations manually if they arise.
+      log-error "Container ${bold}${name}${reset} is in an unexpected state: ${state}"
+      exit 1
+      ;;
+  esac
+}
+
+bazel_name="$(bazel-container-name)"
+function start-bazel {
+  # - Persist the container indefinitely with the appropriate bind-mounts
+  #   so we can later run commands on it.
+  # - Use as many CPU cores as the system can provide.
+  # - Add the canonical hostname `host.docker.internal`
+  #   for consistency across platforms.
+  docker run \
+    --detach \
+    --name="$bazel_name" \
+    --cpus="$(nproc)" \
+    --volume="$repository_root":"$repository_root":ro \
+    --volume="$output_volume":"$output_root" \
+    --volume="${HOME}/.ssh":'/root/.ssh':ro \
+    --add-host=host.docker.internal=host-gateway \
+    --entrypoint=/usr/bin/sleep \
+    gcr.io/bazel-public/bazel:latest \
+    'infinity'
+}
+ensure-container-running "$bazel_name" start-bazel
+
+# Ideally, we would bind-mount the "$output_root" path on the host
+# directly to the "$output_root" path in the Bazel container,
+# like in https://bazel.build/install/docker-container,
+# to have access to built artifacts and test logs after the Bazel container exits.
+# While this works fine on Linux, it unfortunately appears subtly broken on Mac.
+# Weird failures due to missing files in the analysis phase
+# appear to stem from latency issues in both the VirtioFS and gRPC FUSE filesharing systems.
+#
+# To work around this, mount a simple named volume to the output root on the Bazel container,
+# and simultaneously mount that same volume on another container called the "output sync container",
+# which runs persistently in the background,
+# and whose only purpose is to synchronize the contents of the volume with the host's output root.
+output_sync_name='bazel-output-sync'
+function start-output-sync {
+  docker run \
+    --name="$output_sync_name" \
+    --detach \
+    --volume="$output_volume":'/volume' \
+    --volume="$output_root":'/host-output' \
+    alpine:latest \
+    sh -c 'apk update && apk add unison && exec unison /volume /host-output -batch -silent -repeat watch -prefer /volume'
+}
+ensure-container-running "$output_sync_name" start-output-sync
+
+declare -a docker_options
+
+# Tell Docker to allocate a pseudo-TTY if stdout (1) is a pseudo-TTY.
+# In that case, Bazel will use formatted output.
+if [ -t 1 ]
+then
+  docker_options+=(--tty)
+fi
+
+exec docker exec \
+  --user=0 \
+  --env=USER=0 \
+  --workdir="$working_directory" \
+  "${docker_options[@]}" \
+  "$bazel_name" \
+  bazel --output_user_root="$output_root" "$@"
