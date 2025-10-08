@@ -5,7 +5,6 @@
 # Requirements:
 # - bazel
 # - docker
-# - git
 
 set -e
 
@@ -35,12 +34,11 @@ function log-info {
   echo >&2 -e "[${blue}INFO${reset}] $1"
 }
 
-# Map the root of the Git repository on the host to the same path inside the container
+# Map the root of the workspace on the host to the same path inside the container
 # so that any build errors include accurate absolute file paths.
-repository_root="$(git rev-parse --show-toplevel)"
+repository_root="$(bazel info workspace)"
 
-# Print the static name of the container for the current repository root to stdout.
-# Use a separate container for each repository root in case there are multiple Git worktrees.
+# Print the static name of the container for the current workspace root to stdout.
 function bazel-container-name {
   # Combine the basename, for intelligibility, with a hash of the full path, for uniqueness.
   echo "bazel-$(
