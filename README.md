@@ -93,4 +93,10 @@ at the cost of ~2x disk bandwidth usage
 and a negligible amount of latency (perhaps a second or two)
 before build outputs actually become available on the host.
 
+Try running [`./is-docker-for-mac-still-broken-somehow.sh`]
+on both Mac and Linux.
+See how the build fails on Mac, but succeeds on Linux.
+Props to whoever can explain why.
+
 [Unison]: https://en.wikipedia.org/wiki/Unison_(software)
+[`./is-docker-for-mac-still-broken-somehow.sh`]: is-docker-for-mac-still-broken-somehow.sh
