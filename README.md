@@ -4,11 +4,6 @@ A drop-in replacement for `bazel` that runs commands in a *persistent* Docker co
 
 Implemented as a standalone ~150-line Bash script.
 
-> [!WARNING]
-> Don't use this if there is a user account on your system named `_docker`
-> that runs Bazel commands.
-> There must be somebody&hellip;
-
 ## Background
 
 There is an official [Bazel Docker image],
