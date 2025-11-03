@@ -163,6 +163,7 @@ exec docker exec \
   --user=0 \
   --env=USER=0 \
   --workdir="$working_directory" \
+  --interactive \
   "${docker_options[@]}" \
   "$bazel_name" \
   bazel --output_user_root="$output_root" "$@"
